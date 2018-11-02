@@ -1,0 +1,243 @@
+from tkinter import *
+from tkinter.ttk import *
+from tkinter import ttk
+from tkinter import Button
+from tkinter import messagebox
+from PIL import Image, ImageTk #als PIL niet kan worden geimporteerd gebruik PILLOW
+import requests #requests library voor de api
+import xmltodict
+from requests.auth import HTTPBasicAuth
+import time
+import csv
+
+def stop(): #Hierdoor stopt het programma
+    root.quit()
+
+def tijdenophalen(): #1 functie die meerdere functies aanroept om het overzichtelijker te houden
+    getlijststations()
+    capstation()
+    laadtabel()
+
+def enteringedrukt(self): #als er op enter word gedrukt haalt hij de tijden op
+    tijdenophalen()
+
+def getlijststations(): # alle stations worden opgeslagen in een lijst
+    try:
+        auth = ("robertvrie@gmail.com", "i46FXW9YzQIa4jwzcchDjvXHPtinqYaSf8EuMadmRp4iwJSQMPz6Ng")
+        r = requests.get("http://webservices.ns.nl/ns-api-stations-v2", auth=auth)
+        # omzetten van XML naar een dict
+        stationsXML = xmltodict.parse(r.text)
+        for naamStation in stationsXML['Stations']['Station']:
+            if naamStation['Land'] == "NL":
+                langeNaam = naamStation['Namen']['Lang']
+                stationsLijst.append(langeNaam)
+
+    except:
+        messagebox.showinfo("Connection Error", "Verbind met het internet om deze applicatie te gebruiken")
+        quit()
+
+def tick(): # een mechanisme om de klok te laten lopen, zo krijg je live tijd
+    global tijd1
+    tijd2 = time.strftime('%H:%M')
+    if tijd2 != tijd1:
+        tijd1 = tijd2
+        clock.config(text=tijd2)
+    clock.after(200, tick)
+
+def capstation(): # hierdoor wordt waarneer jij geen hoofdletter typed automatisch een hoofdletter
+    hoofdletterStation=station.get()
+    hoofdletterStation= hoofdletterStation.title()
+    station.set(hoofdletterStation)
+    return hoofdletterStation
+
+def refresh(): #automatisch reload na 10 sec
+    if station.get() in stationsLijst:
+        tijdenophalen()
+        root.after(10000, refresh)
+
+def checkstation():
+    if getfavouritestation() != '':
+        station.set(str(getfavouritestation()).strip("{['").strip("']}"))
+    else:
+        station.set("Utrecht Centraal")
+
+def getfavouritestation(): #leest je opgeslagen Station uit en vult hem in
+
+    try:
+        with open("favouritestation.csv") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                return row
+
+    except FileNotFoundError:
+        return ""
+
+def setfavourite(): # sla een station op als favourite en schrijf hem naar een csv bestand
+    csv = open("favouritestation.csv", "a")
+    csv.truncate(0)
+    csv.write(station.get())
+    csv.close()
+    messagebox.showinfo("Opdracht Voltooid", "U favorieten station is nu: " + str(getfavouritestation()).strip("{['").strip("']}"))
+
+def info():
+    messagebox.showinfo("Help", "Vul een stationsnaam in en klik op 'Haal tijden op', klik op favourite om de volgende keer jouw favourite station te weergeven bij opstarten.")
+
+def laadtabel(): #gegevens ophalen van API via xmltodict
+    if station.get() not in stationsLijst:
+        messagebox._show("Fout!", "Geef een geldig Station op", _icon="error")
+
+    else:
+        try:
+            tv.delete(*tv.get_children())
+            response = requests.get('https://webservices.ns.nl/ns-api-avt?station=' + capstation(),
+                                auth=HTTPBasicAuth("robertvrie@gmail.com",
+                                                   "i46FXW9YzQIa4jwzcchDjvXHPtinqYaSf8EuMadmRp4iwJSQMPz6Ng"))
+            status = response.status_code
+            xmlTijdelijk = xmltodict.parse(response.text)  # het omzetten van de xml code naar 1 lange string oftwel een dict
+
+        except:
+            messagebox.showinfo("Connection Error", "Verbind met het internet om deze applicatie te gebruiken")
+            quit()
+
+
+        for vertrekinformatie in xmlTijdelijk['ActueleVertrekTijden']['VertrekkendeTrein']:
+
+            bestemming = vertrekinformatie['EindBestemming']
+            vertrektijdtrein = vertrekinformatie['VertrekTijd']  # 2018-10-11T15:32:00+0200
+            vertrektijdtrein = vertrektijdtrein[11:16]  # index van hierboven
+            treinsoort = vertrekinformatie['TreinSoort']
+            spoornummer = str(
+                vertrekinformatie['VertrekSpoor'])  # +OrderedDict([('@wijziging', 'false'), ('#text', '2')])
+            spoornummerraw = spoornummer.replace("OrderedDict([('@wijziging', 'false'), ('#text', '",
+                                                 "")  # haal deze tekens weg
+            spoornummerraw1 = spoornummerraw.replace("')])", "")  # haal deze tekens weg ")])"
+            spoornummerraw2 = spoornummerraw1.replace("OrderedDict([('@wijziging', 'true'), ('#text', '","")  # haal deze tekens weg
+
+            try:
+                vertraging = vertrekinformatie['VertrekVertragingTekst']
+                vertragingInfo = vertraging.replace("+", "")
+
+                tv.insert('', 'end', text=bestemming, values=(vertrektijdtrein,
+                                                              treinsoort, spoornummerraw2, vertragingInfo ),tags=('red'))
+
+
+
+
+
+            except KeyError:
+                vertraging = "----"
+                vertragingInfo = vertraging.replace("+", "")
+
+                tv.insert('', 'end', text=bestemming, values=(vertrektijdtrein,
+                                                              treinsoort, spoornummerraw2, vertragingInfo))
+
+def main():
+    App(hoofdscherm)
+
+class App(Frame):
+
+    def __init__(self, parent):
+        Frame.__init__(self, parent)
+        self.maakUI()
+        self.grid(sticky = (N,S,W,E))
+        parent.grid_rowconfigure(0, weight = 1)
+        parent.grid_columnconfigure(0, weight = 1)
+
+    def maakUI(self): #vertrektijden tabel
+       global tv
+       tv = Treeview(self)
+       tv['columns'] = ('vertrek', 'treinsoort', 'spoor','vertraging')
+       tv.heading("#0", text='Bestemming', anchor='w')
+       tv.column("#0", anchor="w")
+       tv.heading('vertrek', text='Vertrek')
+       tv.column('vertrek', anchor='center', width=100)
+       tv.heading('treinsoort', text='Treinsoort')
+       tv.column('treinsoort', anchor='center', width=100)
+       tv.heading('spoor', text='Spoor')
+       tv.column('spoor', anchor='center', width=100)
+       tv.heading('vertraging',text='Vertraging')
+       tv.column('vertraging', anchor='center',width=70)
+       tv.grid(sticky = (N,S,W,E))
+       self.treeview = tv
+       self.grid_rowconfigure(0, weight = 1)
+       self.grid_columnconfigure(0, weight = 1)
+       tv.tag_configure('red', background='red', foreground='white')
+
+
+
+
+
+#tkinter instellingen
+root = Tk()
+root.title("NS-Vertrektijden")
+root.geometry("1000x400")
+root.bind('<Return>', enteringedrukt)
+root.configure(background='gold')
+hoofdscherm = Frame(master=root, width=100)
+hoofdscherm.place(x = 206, y = 46)
+station = StringVar(root)
+
+#nul waarden voor lijsten
+tijd1 = ''
+stationsLijst = []
+
+
+if __name__ == '__main__':
+
+       main()
+
+
+checkstation()
+getlijststations()
+
+#tkinter widgets
+clock = Label(master=root, text=tijd1, background="gold", foreground="white", font=("bold", 25))
+clock.place(x = 54, y = 46)
+
+labelBlauw = Label(master = root, text ="", background = "navy", foreground = "white", width="100", font=("bold", 14))
+labelBlauw.place(x = 0, y = 10)
+
+labelTijd = Label(master = root, text ="Tijd", background = "navy", foreground = "white", width="100", font=("bold", 14))
+labelTijd.place(x = 80, y = 10)
+
+labelPlan = Label(master = root, text = "Plan uw reis                                                                                                                                                                                                                ", background = "navy", foreground = "white", font=("bold", 14))
+labelPlan.place(x = 436, y = 10)
+
+labelPlaats = Label(master = root, text = "Plaats", background = "navy", foreground = "white", font=("bold", 14))
+labelPlaats.place(x = 856, y = 10)
+
+buttonStop = Button(master=root, text='Stop', foreground="white", background='red', width=25, height=2, font=("bold", 14), command = stop)
+buttonStop.place(x = 206, y = 280)
+
+buttonTijden = Button(master=root, text='Haal tijden op', background="navy", foreground="white", width=25, height=2, font = ("bold", 14), command = tijdenophalen)
+buttonTijden.place(x = 494, y = 280)
+
+buttonFavourite = Button(master=root, text='Favourite', background="navy", foreground="white", width=8, height=1, font = ("bold", 14), command = setfavourite)
+buttonFavourite.place(x = 895, y = 354)
+
+buttonInfo = Button(master=root, text='Help', background="navy", foreground="white", width=8, height=1, font = ("bold", 14), command = info)
+buttonInfo.place(x = 790, y = 354)
+
+beginStation = ttk.Combobox(root, textvariable=station, font=('Arial', 13))
+beginStation['values'] = stationsLijst
+beginStation.place(x = 790, y = 46)
+
+refresh()
+tick()
+
+# open logo
+try:
+    image = Image.open("ns-logo.png")
+    photo = ImageTk.PhotoImage(image)
+    label = Label(image=photo, background='gold')
+    label.place(x=35,y=240)
+
+except FileNotFoundError:  # Indien file niet aanwezig
+    messagebox._show("Fout!", "ns-logo.png is niet aanwezig!", _icon="error")
+    pass
+
+
+root.mainloop()
+
+
+
